@@ -241,10 +241,11 @@
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
   
-    // WARNING: Replace these placeholders with your actual Firebase/Gemini configurations.
-    // NOTE: For security in a real application, configuration and API key should be handled securely on a server, not exposed client-side.
+    // ====================================================================================
+    // 📢📢📢 중요: 이 부분에 당신의 API 키를 넣어주세요! 📢📢📢
+    // ====================================================================================
     const firebaseConfig = {
-      apiKey: "YOUR_FIREBASE_API_KEY",
+      apiKey: "YOUR_FIREBASE_API_KEY", // <-- 여기에 파이어베이스 API 키
       authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
       projectId: "YOUR_PROJECT_ID",
       storageBucket: "YOUR_PROJECT_ID.appspot.com",
@@ -252,14 +253,12 @@
       appId: "YOUR_APP_ID"
     };
     const appId = firebaseConfig.appId || 'default-app-id';
-    const initialAuthToken = null; // Assuming no custom token for this simple example
-  
+    
     // Gemini API settings
-    // **경고:** 이 API 키는 **절대로** 실제 사용 시 클라이언트 코드에 직접 노출해서는 안 됩니다.
-    // 테스트 목적으로만 사용하며, 실제 운영 환경에서는 반드시 서버 측에서 처리해야 합니다.
     const apiKey = "YOUR_GEMINI_API_KEY"; // <<-- 여기에 실제 Gemini API 키를 넣어주세요!
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
     const systemPrompt = "당신은 '올드 맨 스티브'라는 이름의 친절하고 현명하며 약간 괴짜 같은 광산 세계의 상인입니다. 당신은 가뭄을 해결하기 위해 물을 판매합니다. 당신의 답변은 짧고 격려하며, 채굴, 게임 세계, 그리고 가뭄과 관련되어야 합니다. 당신이 AI나 언어 모델이라는 것을 언급하지 마십시오.";
+    // ====================================================================================
 
 
     // Initialize Firebase
@@ -282,16 +281,10 @@
             userIdDisplay.textContent = currentUserId.slice(0, 8) + '...';
             setupChatListener();
         } else {
-            if (initialAuthToken) {
-                try {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } catch (error) {
-                    console.error("Custom token sign-in failed:", error);
-                    await signInAnonymously(auth);
-                }
-            } else {
-                await signInAnonymously(auth);
-            }
+            // 익명 로그인 시도
+            await signInAnonymously(auth).catch((error) => {
+                console.error("익명 로그인 실패:", error);
+            });
         }
     });
 
@@ -305,6 +298,12 @@
         // Check if the message is for the NPC
         if (messageText.startsWith("상인:")) {
             const userQuery = messageText.substring(3).trim();
+            // 사용자 메시지를 먼저 채팅창에 추가
+            addDoc(collection(db, chatCollectionPath), {
+                userId: currentUserId,
+                text: messageText,
+                timestamp: serverTimestamp()
+            });
             await getShopkeeperResponse(userQuery);
         } else {
             // Regular chat message to Firestore
@@ -347,12 +346,20 @@
             const result = await response.json();
             const npcText = result.candidates?.[0]?.content?.parts?.[0]?.text || "죄송합니다, 지금은 답변해드릴 수 없습니다.";
           
-            messageElement.innerHTML = `상인: ${npcText}`;
+            // Firestore에 NPC 응답 메시지 추가 (리스너가 채팅창 업데이트)
+            addDoc(collection(db, chatCollectionPath), {
+                userId: '상인', 
+                text: npcText,
+                timestamp: serverTimestamp()
+            });
+            // 임시 메시지 엘리먼트 제거 (리스너가 새로고침함)
+            messageElement.remove();
 
 
         } catch (error) {
             console.error("Gemini API call failed:", error);
-            messageElement.innerHTML = `상인: 죄송합니다, 지금은 답변해드릴 수 없습니다.`;
+            // API 호출 실패 시 메시지 처리
+            messageElement.innerHTML = `상인: 죄송합니다, 지금은 답변해드릴 수 없습니다. (API 연결 실패)`;
         }
         chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
     };
@@ -541,6 +548,7 @@
                 break;
         }
 
+        if (!oreColor) return; // 광물 유형이 없으면 종료
 
         for (let i = 0; i < numOre; i++) {
             const oreX = x + (Math.random() * (tileSize - oreSize));
@@ -672,4 +680,356 @@
 
 
     function drawMiningTarget() {
-        let targetX,
+        let targetX, targetY;
+        switch (player.direction) {
+            case 'up': targetX = player.x; targetY = player.y - 1; break;
+            case 'down': targetX = player.x; targetY = player.y + 1; break;
+            case 'left': targetX = player.x - 1; targetY = player.y; break;
+            case 'right': targetX = player.x + 1; targetY = player.y; break;
+            default: return;
+        }
+
+
+        // 맵 경계 확인
+        if (targetX < 0 || targetX >= MAP_WIDTH || targetY < 0 || targetY >= MAP_HEIGHT) return;
+
+
+        const tileType = world[targetY][targetX];
+        if (tileType === TILE_TYPES.EMPTY) return; // 빈 공간은 대상이 아님
+
+
+        const startX = Math.max(0, player.x - Math.floor(GRID_WIDTH / 2));
+        const startY = Math.max(0, player.y - Math.floor(GRID_HEIGHT / 2));
+        const drawX = (targetX - startX) * TILE_SIZE;
+        const drawY = (targetY - startY) * TILE_SIZE;
+
+
+        // 채굴 대상 테두리 그리기
+        ctx.strokeStyle = '#e74c3c'; // 빨간색 테두리
+        ctx.lineWidth = 3;
+        ctx.strokeRect(drawX + 1, drawY + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+    }
+
+
+    function movePlayer(dx, dy) {
+        if (isGameOver) return;
+
+
+        const newX = player.x + dx;
+        const newY = player.y + dy;
+
+
+        // 새로운 방향 설정
+        if (dx === 1) player.direction = 'right';
+        else if (dx === -1) player.direction = 'left';
+        else if (dy === 1) player.direction = 'down';
+        else if (dy === -1) player.direction = 'up';
+
+
+        // 맵 경계 및 이동 가능 확인
+        if (newX >= 0 && newX < MAP_WIDTH && newY >= 0 && newY < MAP_HEIGHT) {
+            if (world[newY][newX] === TILE_TYPES.EMPTY || (newX === shopkeeper.x && newY === shopkeeper.y)) {
+                player.x = newX;
+                player.y = newY;
+                draw();
+                // 상인 근처 도착 메시지
+                if (Math.abs(player.x - shopkeeper.x) <= 1 && Math.abs(player.y - shopkeeper.y) <= 1 && (player.x !== shopkeeper.x || player.y !== shopkeeper.y)) {
+                    showMessage("상인 '올드 맨 스티브' 근처에 있습니다. 스페이스바를 눌러 상점을 이용하세요.", 3000, 'text-yellow-400');
+                } else {
+                    showMessage(""); // 메시지 지우기
+                }
+            } else {
+                showMessage("돌이 길을 막고 있습니다. 스페이스바를 눌러 채굴하세요!", 2000, 'text-red-400');
+            }
+        }
+    }
+
+
+    function mine() {
+        if (isGameOver) return;
+
+
+        let targetX, targetY;
+        switch (player.direction) {
+            case 'up': targetX = player.x; targetY = player.y - 1; break;
+            case 'down': targetX = player.x; targetY = player.y + 1; break;
+            case 'left': targetX = player.x - 1; targetY = player.y; break;
+            case 'right': targetX = player.x + 1; targetY = player.y; break;
+            default: return;
+        }
+
+
+        if (targetX < 0 || targetX >= MAP_WIDTH || targetY < 0 || targetY >= MAP_HEIGHT) return;
+
+
+        const minedTileType = world[targetY][targetX];
+
+
+        if (minedTileType === TILE_TYPES.STONE || minedTileType > TILE_TYPES.STONE) {
+            // 광물 획득
+            const tileName = Object.keys(TILE_TYPES).find(key => TILE_TYPES[key] === minedTileType);
+            
+            if (minedTileType !== TILE_TYPES.STONE) {
+                player.inventory[tileName] = (player.inventory[tileName] || 0) + 1;
+                showMessage(`${tileName}을(를) 채굴했습니다!`, 1500, 'text-green-400');
+            } else {
+                showMessage("돌을 채굴했습니다.", 1500, 'text-gray-400');
+            }
+
+
+            // 타일을 빈 공간으로 변경
+            world[targetY][targetX] = TILE_TYPES.EMPTY;
+            draw();
+            updateInventory();
+
+
+            // 승리 조건은 판매 후 점수 확인으로 대체
+        } else if (minedTileType === TILE_TYPES.EMPTY) {
+            showMessage("빈 공간입니다. 이동하세요.", 1500);
+        }
+    }
+
+
+    function interact() {
+        if (isGameOver) return;
+
+
+        // 상인과의 상호작용
+        if (Math.abs(player.x - shopkeeper.x) <= 1 && Math.abs(player.y - shopkeeper.y) <= 1) {
+            openShop();
+        } else {
+            mine();
+        }
+    }
+
+
+    function openShop() {
+        showMessage("✨ 올드 맨 스티브: '광물을 팔아 점수를 모아 물을 사세요! '판매: [광물 이름]'이라고 채팅하세요.'", 5000, 'text-cyan-300');
+    }
+
+
+    function processShopCommand(command) {
+        const parts = command.toLowerCase().split(':').map(p => p.trim());
+        if (parts.length !== 2 || parts[0] !== '판매') {
+            return;
+        }
+
+
+        const itemName = parts[1].toUpperCase();
+        const tileTypeIndex = TILE_TYPES[itemName];
+        const tileValue = TILE_SCORES[tileTypeIndex];
+        const quantity = player.inventory[itemName] || 0;
+        
+        // 상인 NPC의 응답 메시지를 저장할 변수
+        let npcResponseText = '';
+
+
+        if (!tileTypeIndex || tileValue === undefined) {
+             npcResponseText = `${itemName}은(는) 제가 사지 않는 물건이군요. 다른 광물을 가져오세요.`;
+        } else if (quantity > 0) {
+            const totalValue = quantity * tileValue;
+            score += totalValue;
+            player.inventory[itemName] = 0; // 전부 판매
+            scoreElement.textContent = score;
+            updateInventory();
+
+
+            npcResponseText = `"${itemName.substring(0, 1) + itemName.substring(1).toLowerCase()} ${quantity}개"를 ${totalValue}점에 판매했습니다. 가뭄이 조금씩 해소되고 있습니다!`;
+             // 승리 조건 확인 (5000점)
+            if (score >= 5000) {
+                gameOver(true);
+            }
+        } else {
+            npcResponseText = `${itemName}이(가) 인벤토리에 없습니다. 채굴하세요!`;
+        }
+        
+        // 상인 메시지를 Firestore에 추가
+        addDoc(collection(db, chatCollectionPath), {
+            userId: '상인',
+            text: npcResponseText,
+            timestamp: serverTimestamp()
+        });
+    }
+
+
+    function showMessage(text, duration = 3000, colorClass = 'text-white') {
+        messageBox.textContent = text;
+        messageBox.className = `message-box ${colorClass}`;
+        if (duration > 0) {
+            clearTimeout(messageBox.timer);
+            messageBox.timer = setTimeout(() => {
+                messageBox.textContent = '';
+                messageBox.className = 'message-box';
+            }, duration);
+        }
+    }
+
+
+    function updateInventory() {
+        let inventoryText = '';
+        let isEmpty = true;
+        for (const item in player.inventory) {
+            if (player.inventory[item] > 0) {
+                // 첫 글자만 대문자로 변환하여 표시
+                const formattedItem = item.substring(0, 1) + item.substring(1).toLowerCase();
+                inventoryText += `${formattedItem}: ${player.inventory[item]}개, `;
+                isEmpty = false;
+            }
+        }
+        inventoryElement.textContent = isEmpty ? '비어 있음' : inventoryText.slice(0, -2);
+    }
+
+
+    function gameOver(win = false) {
+        isGameOver = true;
+        gameOverOverlay.style.display = 'flex';
+        const textElement = gameOverOverlay.querySelector('.game-over-text');
+        if (win) {
+            textElement.textContent = `가뭄 해결! 최종 점수: ${score}`;
+            textElement.style.color = '#2ecc71';
+        } else {
+            textElement.textContent = `게임 오버! 최종 점수: ${score}`;
+            textElement.style.color = '#e74c3c';
+        }
+    }
+
+
+    // 이벤트 핸들러
+
+
+    document.addEventListener('keydown', (e) => {
+        if (isGameOver) return;
+        switch (e.key) {
+            case 'ArrowUp':
+            case 'w':
+                e.preventDefault();
+                movePlayer(0, -1);
+                break;
+            case 'ArrowDown':
+            case 's':
+                e.preventDefault();
+                movePlayer(0, 1);
+                break;
+            case 'ArrowLeft':
+            case 'a':
+                e.preventDefault();
+                movePlayer(-1, 0);
+                break;
+            case 'ArrowRight':
+            case 'd':
+                e.preventDefault();
+                movePlayer(1, 0);
+                break;
+            case ' ': // Spacebar
+                e.preventDefault();
+                interact();
+                break;
+        }
+    });
+
+
+    // 마우스 드래그를 이용한 화면 이동 (미니맵 역할)
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.button === 2) { // 오른쪽 버튼
+            e.preventDefault();
+            isDragging = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+        }
+    });
+
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging || isGameOver) return;
+
+
+        const dx = e.clientX - lastMouseX;
+        const dy = e.clientY - lastMouseY;
+
+
+        // 이동 속도 조절
+        const speed = 0.05;
+
+
+        // 플레이어 위치를 드래그 방향의 반대로 조정하여 월드를 움직이는 것처럼 보이게 함
+        player.x = Math.max(0, Math.min(MAP_WIDTH - 1, player.x - Math.round(dx * speed)));
+        player.y = Math.max(0, Math.min(MAP_HEIGHT - 1, player.y - Math.round(dy * speed)));
+
+
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+
+
+        draw();
+    });
+
+
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+
+
+    // 캔버스 오른쪽 클릭 메뉴 방지
+    canvas.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+    });
+
+
+    // 게임 오버 버튼 이벤트
+    playAgainBtn.addEventListener('click', resetGame);
+    quitBtn.addEventListener('click', () => {
+        showMessage("게임을 종료합니다. 다음 기회에!", 5000);
+        // 필요하다면 게임 화면 숨기기 로직 추가
+        // document.querySelector('.main-container').style.display = 'none';
+        gameOver(false);
+    });
+
+
+    // Listen for new messages in real-time
+    const setupChatListener = () => {
+        const q = query(collection(db, chatCollectionPath), orderBy("timestamp"));
+        onSnapshot(q, (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === "added") {
+                    const data = change.doc.data();
+
+                    // 실시간 리스너에서 상점 판매 커맨드를 발견하면 즉시 처리
+                    if (data.userId === currentUserId && data.text.toLowerCase().startsWith('판매:')) {
+                        processShopCommand(data.text);
+                        // 이 메시지는 채팅창에 추가되지 않고 판매 로직만 실행됨
+                        return; // 채팅창 추가를 건너뜀
+                    }
+                    
+                    const messageElement = document.createElement('div');
+                    const isNpc = data.userId === '상인';
+                    const messageUser = data.userId === currentUserId ? '나' : (isNpc ? '상인' : data.userId.slice(0, 8) + '...');
+                    
+                    if (isNpc) {
+                        messageElement.className = 'chat-message chat-message-npc';
+                        messageElement.innerHTML = `${messageUser}: ${data.text}`;
+                    } else {
+                        messageElement.className = 'chat-message';
+                        messageElement.innerHTML = `<span class="chat-message-user">${messageUser}:</span> ${data.text}`;
+                    }
+                    
+                    chatMessagesContainer.appendChild(messageElement);
+
+                    // 채팅 메시지에서 공백을 제거하고 '상점'인지 확인하여 순간이동
+                    if (data.text.trim().toLowerCase() === '상점' && data.userId === currentUserId) {
+                        player.x = shopkeeper.x;
+                        player.y = shopkeeper.y + 1; // Teleport just below the shopkeeper
+                        draw();
+                        showMessage("상점으로 순간이동합니다!", 2000, 'text-green-400');
+                    }
+                }
+            });
+            chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+        });
+    };
+
+
+    // 게임 시작
+    resetGame();
+</script>
+</body>
+</html>
