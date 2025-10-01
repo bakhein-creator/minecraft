@@ -112,15 +112,15 @@
             padding: 8px;
             border-radius: 6px;
             word-wrap: break-word;
+            font-size: 0.9rem;
         }
         .chat-message-user {
             font-size: 0.8rem;
             color: #bbb;
         }
         .chat-message-npc {
-            background-color: #4a4a4a;
-            font-size: 0.9rem;
-            color: #d8b4fe;
+            background-color: #333; /* Darker background for NPC */
+            color: #d8b4fe; /* Purple text for NPC */
             font-style: italic;
         }
         .chat-input-container {
@@ -143,6 +143,10 @@
             border-radius: 6px;
             cursor: pointer;
             border: none;
+            transition: background-color 0.2s;
+        }
+        .chat-send-btn:hover {
+            background-color: #2980b9;
         }
         .game-over-overlay {
             position: absolute;
@@ -156,6 +160,7 @@
             align-items: center;
             flex-direction: column;
             z-index: 10;
+            border-radius: 8px; /* Match canvas border */
         }
         .game-over-text {
             font-size: 3rem;
@@ -189,6 +194,7 @@
             color: white;
             border: none;
         }
+        .text-purple-300 { color: #d8b4fe; } /* Custom Tailwind class for NPC user ID */
     </style>
 </head>
 <body>
@@ -213,7 +219,7 @@
         <div class="inventory-box">
             인벤토리: <span id="inventory"></span>
         </div>
-        <div id="gameOverOverlay" class="game-over-overlay hidden" style="display: none;">
+        <div id="gameOverOverlay" class="game-over-overlay" style="display: none;">
             <div class="game-over-text">당신은 가뭄을 해결했습니다</div>
             <div class="game-over-buttons">
                 <button id="playAgainBtn" class="game-over-button">다시 플레이</button>
@@ -221,12 +227,12 @@
             </div>
         </div>
     </div>
-  
+ 
     <div class="chat-container">
         <div class="chat-header">채팅</div>
         <div class="chat-messages" id="chatMessages"></div>
         <div class="chat-input-container">
-            <input type="text" id="chatInput" class="chat-input" placeholder="메시지 입력...">
+            <input type="text" id="chatInput" class="chat-input" placeholder="메시지 입력..." autocomplete="off">
             <button id="sendBtn" class="chat-send-btn">보내기</button>
         </div>
         <div class="text-center text-xs mt-2 text-gray-400">
@@ -240,40 +246,86 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-  
-    // ====================================================================================
-    // 📢📢📢 중요: 이 부분에 당신의 API 키를 넣어주세요! 📢📢📢
-    // ====================================================================================
-    const firebaseConfig = {
-      apiKey: "YOUR_FIREBASE_API_KEY", // <-- 여기에 파이어베이스 API 키
-      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-      projectId: "YOUR_PROJECT_ID",
-      storageBucket: "YOUR_PROJECT_ID.appspot.com",
-      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-      appId: "YOUR_APP_ID"
-    };
-    const appId = firebaseConfig.appId || 'default-app-id';
     
+    // ====================================================================================
+    // Firebase 및 Gemini API 설정 (Canvas 환경 변수 사용)
+    // ====================================================================================
+    // Global variables provided by the environment
+    const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
     // Gemini API settings
-    const apiKey = "YOUR_GEMINI_API_KEY"; // <<-- 여기에 실제 Gemini API 키를 넣어주세요!
+    const apiKey = ""; // Canvas environment injects this
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
     const systemPrompt = "당신은 '올드 맨 스티브'라는 이름의 친절하고 현명하며 약간 괴짜 같은 광산 세계의 상인입니다. 당신은 가뭄을 해결하기 위해 물을 판매합니다. 당신의 답변은 짧고 격려하며, 채굴, 게임 세계, 그리고 가뭄과 관련되어야 합니다. 당신이 AI나 언어 모델이라는 것을 언급하지 마십시오.";
     // ====================================================================================
-
 
     // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
     const auth = getAuth(app);
-
-
+    
     let currentUserId = null;
     const chatCollectionPath = `/artifacts/${appId}/public/data/chat`;
     const userIdDisplay = document.getElementById('userIdDisplay');
     const chatMessagesContainer = document.getElementById('chatMessages');
     const chatInput = document.getElementById('chatInput');
     const sendBtn = document.getElementById('sendBtn');
-  
+    
+    // Function to display chat messages in the UI
+    function displayMessage(userId, text, isNpc = false) {
+        const messageElement = document.createElement('div');
+        messageElement.className = 'chat-message';
+        
+        let formattedUserId = userId;
+        let userIdClass = 'text-gray-400';
+
+        if (isNpc) {
+            formattedUserId = '상인 (NPC)';
+            messageElement.classList.add('chat-message-npc');
+            userIdClass = 'text-purple-300'; // NPC color
+        } else if (userId === currentUserId) {
+            formattedUserId = '나 (' + userId.slice(0, 4) + '...)';
+            messageElement.classList.add('bg-blue-600', 'bg-opacity-20');
+        } else {
+            formattedUserId = '플레이어 (' + userId.slice(0, 4) + '...)';
+            messageElement.classList.add('bg-gray-600', 'bg-opacity-20');
+        }
+
+        // '상인:' 접두사는 제거하고 표시
+        const displayText = text.startsWith("상인:") ? text.substring(3).trim() : text;
+
+        messageElement.innerHTML = `<span class="${userIdClass} font-bold mr-2">[${formattedUserId}]</span> ${displayText}`;
+        chatMessagesContainer.appendChild(messageElement);
+        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+    }
+
+    // Function to set up the real-time chat listener
+    const setupChatListener = () => {
+        if (!db) return;
+        // timestamp 기준으로 정렬하여 쿼리
+        const q = query(collection(db, chatCollectionPath), orderBy("timestamp", "asc"));
+
+        onSnapshot(q, (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === "added") {
+                    const data = change.doc.data();
+                    const userId = data.userId;
+                    const text = data.text;
+                    const isNpc = userId === '상인';
+                    
+                    // '판매:' 명령어는 게임 점수 처리용이므로 채팅창에 노출하지 않음
+                    if (text.toLowerCase().startsWith("판매:")) return; 
+                    
+                    displayMessage(userId, text, isNpc);
+                }
+            });
+        }, (error) => {
+            console.error("채팅 리스너 오류:", error);
+        });
+    };
+
     // Authenticate and set up chat listener
     onAuthStateChanged(auth, async (user) => {
         if (user) {
@@ -281,32 +333,103 @@
             userIdDisplay.textContent = currentUserId.slice(0, 8) + '...';
             setupChatListener();
         } else {
-            // 익명 로그인 시도
-            await signInAnonymously(auth).catch((error) => {
-                console.error("익명 로그인 실패:", error);
-            });
+            // Check for custom auth token first
+            if (initialAuthToken) {
+                try {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } catch (error) {
+                    console.error("Custom token sign in failed, attempting anonymous:", error);
+                    await signInAnonymously(auth).catch((anonError) => {
+                        console.error("Anonymous sign in failed:", anonError);
+                    });
+                }
+            } else {
+                // If no token, sign in anonymously
+                await signInAnonymously(auth).catch((anonError) => {
+                    console.error("Anonymous sign in failed:", anonError);
+                });
+            }
         }
     });
 
+    // Function to get a response from the Gemini API
+    const getShopkeeperResponse = async (userQuery) => {
+        try {
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                config: {
+                    systemInstruction: systemPrompt
+                },
+                tools: [{ googleSearch: {} }] // Enable Google Search Grounding
+            };
+            
+            // Exponential backoff retry logic
+            let response, result;
+            const maxRetries = 3;
+            for (let i = 0; i < maxRetries; i++) {
+                const delay = Math.pow(2, i) * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay)); 
+
+                response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (response.ok) {
+                    result = await response.json();
+                    break;
+                }
+                if (i === maxRetries - 1) throw new Error("API call failed after retries.");
+            }
+
+            const npcText = result.candidates?.[0]?.content?.parts?.[0]?.text || "죄송합니다, 지금은 답변해드릴 수 없습니다.";
+            
+            // Firestore에 NPC 응답 메시지 추가 (리스너가 채팅창 업데이트)
+            addDoc(collection(db, chatCollectionPath), {
+                userId: '상인', 
+                text: npcText,
+                timestamp: serverTimestamp()
+            });
+
+        } catch (error) {
+            console.error("Gemini API call failed:", error);
+            // API 호출 실패 시 메시지 처리
+            addDoc(collection(db, chatCollectionPath), {
+                userId: '상인', 
+                text: "죄송합니다, 지금은 답변해드릴 수 없습니다. (API 연결 실패)",
+                timestamp: serverTimestamp()
+            });
+        }
+    };
 
     // Function to add a new message to Firestore
     const sendMessage = async () => {
         const messageText = chatInput.value.trim();
         if (messageText === "" || !currentUserId) return;
-
-
-        // Check if the message is for the NPC
-        if (messageText.startsWith("상인:")) {
+        
+        // 1. Check if the message is a 'SALE' command (Handled locally by processShopCommand)
+        if (messageText.toLowerCase().startsWith("판매:")) {
+            // 사용자 메시지를 먼저 채팅창에 추가 (판매 명령을 로그로 남김)
+            await addDoc(collection(db, chatCollectionPath), {
+                userId: currentUserId,
+                text: messageText,
+                timestamp: serverTimestamp()
+            });
+            processShopCommand(messageText);
+        }
+        
+        // 2. Check if the message is for the NPC
+        else if (messageText.startsWith("상인:")) {
             const userQuery = messageText.substring(3).trim();
             // 사용자 메시지를 먼저 채팅창에 추가
-            addDoc(collection(db, chatCollectionPath), {
+            await addDoc(collection(db, chatCollectionPath), {
                 userId: currentUserId,
                 text: messageText,
                 timestamp: serverTimestamp()
             });
             await getShopkeeperResponse(userQuery);
         } else {
-            // Regular chat message to Firestore
+            // 3. Regular chat message to Firestore
             try {
                 await addDoc(collection(db, chatCollectionPath), {
                     userId: currentUserId,
@@ -319,51 +442,6 @@
         }
         chatInput.value = "";
     };
-
-
-    // Function to get a response from the Gemini API
-    const getShopkeeperResponse = async (userQuery) => {
-        const messageElement = document.createElement('div');
-        messageElement.className = 'chat-message chat-message-npc';
-        messageElement.innerHTML = `상인: ...생각 중...`;
-        chatMessagesContainer.appendChild(messageElement);
-        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-
-
-        try {
-            const payload = {
-                contents: [{ parts: [{ text: userQuery }] }],
-                config: {
-                    systemInstruction: systemPrompt
-                },
-                tools: [{ googleSearch: {} }]
-            };
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json();
-            const npcText = result.candidates?.[0]?.content?.parts?.[0]?.text || "죄송합니다, 지금은 답변해드릴 수 없습니다.";
-          
-            // Firestore에 NPC 응답 메시지 추가 (리스너가 채팅창 업데이트)
-            addDoc(collection(db, chatCollectionPath), {
-                userId: '상인', 
-                text: npcText,
-                timestamp: serverTimestamp()
-            });
-            // 임시 메시지 엘리먼트 제거 (리스너가 새로고침함)
-            messageElement.remove();
-
-
-        } catch (error) {
-            console.error("Gemini API call failed:", error);
-            // API 호출 실패 시 메시지 처리
-            messageElement.innerHTML = `상인: 죄송합니다, 지금은 답변해드릴 수 없습니다. (API 연결 실패)`;
-        }
-        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-    };
-
 
     sendBtn.addEventListener('click', sendMessage);
     chatInput.addEventListener('keydown', (e) => {
@@ -397,7 +475,7 @@
     let shopkeeper = {};
     let score = 0;
     let isGameOver = false;
-  
+    
     // 마우스 드래그를 위한 변수
     let isDragging = false;
     let lastMouseX = 0;
@@ -474,7 +552,7 @@
     function drawStoneTexture(x, y, tileSize) {
         ctx.fillStyle = '#5c5c5c';
         ctx.fillRect(x, y, tileSize, tileSize);
-      
+        
         for (let i = 0; i < 50; i++) {
             const grainX = x + Math.random() * tileSize;
             const grainY = y + Math.random() * tileSize;
@@ -494,7 +572,7 @@
 
     function drawOreTexture(x, y, tileSize, oreType) {
         drawStoneTexture(x, y, tileSize);
-      
+        
         let oreColor;
         let numOre;
         let oreSize;
@@ -771,7 +849,7 @@
             
             if (minedTileType !== TILE_TYPES.STONE) {
                 player.inventory[tileName] = (player.inventory[tileName] || 0) + 1;
-                showMessage(`${tileName}을(를) 채굴했습니다!`, 1500, 'text-green-400');
+                showMessage(`${tileName.substring(0, 1) + tileName.substring(1).toLowerCase()}을(를) 채굴했습니다!`, 1500, 'text-green-400');
             } else {
                 showMessage("돌을 채굴했습니다.", 1500, 'text-gray-400');
             }
@@ -815,32 +893,33 @@
         }
 
 
-        const itemName = parts[1].toUpperCase();
-        const tileTypeIndex = TILE_TYPES[itemName];
+        const rawItemName = parts[1].toUpperCase();
+        const tileTypeIndex = TILE_TYPES[rawItemName];
         const tileValue = TILE_SCORES[tileTypeIndex];
-        const quantity = player.inventory[itemName] || 0;
+        const quantity = player.inventory[rawItemName] || 0;
+        const formattedItemName = rawItemName.substring(0, 1) + rawItemName.substring(1).toLowerCase();
         
         // 상인 NPC의 응답 메시지를 저장할 변수
         let npcResponseText = '';
 
 
-        if (!tileTypeIndex || tileValue === undefined) {
-             npcResponseText = `${itemName}은(는) 제가 사지 않는 물건이군요. 다른 광물을 가져오세요.`;
+        if (!tileTypeIndex || tileValue === undefined || rawItemName === 'STONE' || rawItemName === 'EMPTY') {
+             npcResponseText = `"${formattedItemName}"은(는) 제가 사지 않는 물건이군요. 다른 광물을 가져오세요.`;
         } else if (quantity > 0) {
             const totalValue = quantity * tileValue;
             score += totalValue;
-            player.inventory[itemName] = 0; // 전부 판매
+            player.inventory[rawItemName] = 0; // 전부 판매
             scoreElement.textContent = score;
             updateInventory();
 
 
-            npcResponseText = `"${itemName.substring(0, 1) + itemName.substring(1).toLowerCase()} ${quantity}개"를 ${totalValue}점에 판매했습니다. 가뭄이 조금씩 해소되고 있습니다!`;
-             // 승리 조건 확인 (5000점)
+            npcResponseText = `"${formattedItemName} ${quantity}개"를 ${totalValue}점에 판매했습니다. 가뭄이 조금씩 해소되고 있습니다! 현재 점수: ${score}점.`;
+            // 승리 조건 확인 (5000점)
             if (score >= 5000) {
                 gameOver(true);
             }
         } else {
-            npcResponseText = `${itemName}이(가) 인벤토리에 없습니다. 채굴하세요!`;
+            npcResponseText = `"${formattedItemName}"이(가) 인벤토리에 없습니다. 채굴하세요!`;
         }
         
         // 상인 메시지를 Firestore에 추가
@@ -978,57 +1057,11 @@
     // 게임 오버 버튼 이벤트
     playAgainBtn.addEventListener('click', resetGame);
     quitBtn.addEventListener('click', () => {
-        showMessage("게임을 종료합니다. 다음 기회에!", 5000);
-        // 필요하다면 게임 화면 숨기기 로직 추가
+        showMessage("게임을 종료합니다. 다음 기회에!", 5000, 'text-red-400');
         // document.querySelector('.main-container').style.display = 'none';
-        gameOver(false);
     });
-
-
-    // Listen for new messages in real-time
-    const setupChatListener = () => {
-        const q = query(collection(db, chatCollectionPath), orderBy("timestamp"));
-        onSnapshot(q, (snapshot) => {
-            snapshot.docChanges().forEach((change) => {
-                if (change.type === "added") {
-                    const data = change.doc.data();
-
-                    // 실시간 리스너에서 상점 판매 커맨드를 발견하면 즉시 처리
-                    if (data.userId === currentUserId && data.text.toLowerCase().startsWith('판매:')) {
-                        processShopCommand(data.text);
-                        // 이 메시지는 채팅창에 추가되지 않고 판매 로직만 실행됨
-                        return; // 채팅창 추가를 건너뜀
-                    }
-                    
-                    const messageElement = document.createElement('div');
-                    const isNpc = data.userId === '상인';
-                    const messageUser = data.userId === currentUserId ? '나' : (isNpc ? '상인' : data.userId.slice(0, 8) + '...');
-                    
-                    if (isNpc) {
-                        messageElement.className = 'chat-message chat-message-npc';
-                        messageElement.innerHTML = `${messageUser}: ${data.text}`;
-                    } else {
-                        messageElement.className = 'chat-message';
-                        messageElement.innerHTML = `<span class="chat-message-user">${messageUser}:</span> ${data.text}`;
-                    }
-                    
-                    chatMessagesContainer.appendChild(messageElement);
-
-                    // 채팅 메시지에서 공백을 제거하고 '상점'인지 확인하여 순간이동
-                    if (data.text.trim().toLowerCase() === '상점' && data.userId === currentUserId) {
-                        player.x = shopkeeper.x;
-                        player.y = shopkeeper.y + 1; // Teleport just below the shopkeeper
-                        draw();
-                        showMessage("상점으로 순간이동합니다!", 2000, 'text-green-400');
-                    }
-                }
-            });
-            chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-        });
-    };
-
-
-    // 게임 시작
+    
+    // 게임 초기화
     resetGame();
 </script>
 </body>
